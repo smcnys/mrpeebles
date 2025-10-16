@@ -1,0 +1,320 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Mr. Peebles, M.D. — Clips</title>
+  <meta name="description" content="Watch clips from Mr. Peebles, M.D." />
+  <meta name="theme-color" content="#ff6a00" />
+  <link rel="icon" href="favicon.ico" />
+  <style>
+    :root{
+      --bg:#f6f7fb; --card:#ffffff; --muted:#5b6470; --text:#111827; --brand:#ff6a00; --brand-2:#ff9533;
+      --border:#e5e7eb; --radius:18px; --radius-sm:12px; --shadow:0 8px 24px rgba(16,24,40,.06);
+    }
+    *{box-sizing:border-box}
+    body{margin:0; font-family:ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial; color:var(--text); background:var(--bg)}
+    a{color:inherit; text-decoration:none}
+    header{position:sticky; top:0; backdrop-filter:saturate(140%) blur(8px); background:rgba(255,255,255,.8); border-bottom:1px solid var(--border); z-index:50}
+    .wrap{max-width:1200px; margin:0 auto; padding:16px}
+    nav{display:flex; align-items:center; justify-content:space-between}
+    .brand{display:flex; gap:12px; align-items:center}
+    .brand img{height:44px; width:auto; object-fit:contain}
+
+    .controls{display:grid; grid-template-columns:1.5fr 0.8fr; gap:12px; margin:22px auto; max-width:1200px}
+    .control{background:var(--card); padding:10px 12px; border:1px solid var(--border); border-radius:var(--radius-sm); display:flex; gap:10px; align-items:center; box-shadow:var(--shadow)}
+    .control input, .control select{width:100%; background:transparent; border:0; color:var(--text); outline:none}
+
+    .grid{max-width:1200px; margin:0 auto 60px; display:grid; gap:16px; grid-template-columns:repeat(auto-fill,minmax(250px,1fr))}
+    .card{background:var(--card); border:1px solid var(--border); border-radius:var(--radius); overflow:hidden; box-shadow:var(--shadow); display:flex; flex-direction:column}
+    .thumb{position:relative; background:#eef2ff; display:grid; place-items:center}
+    .thumb img{width:100%; height:150px; object-fit:cover; display:block}
+    .thumb .placeholder{width:100%; height:150px; display:grid; place-items:center; font-weight:800; letter-spacing:.3px; color:#9b4a00; background:radial-gradient(90% 120% at 20% 10%, rgba(255,106,0,.15), transparent), linear-gradient(135deg,#fff4ec,#f1f5f9)}
+    .duration{position:absolute; right:8px; bottom:8px; background:rgba(17,24,39,.75); color:#fff; padding:2px 6px; border-radius:8px; font-size:.8rem}
+    .meta{padding:12px}
+    .meta h3{margin:0; font-size:1rem; white-space:nowrap; overflow:hidden; text-overflow:ellipsis}
+    .play{margin:12px; padding:10px 12px; border-radius:10px; background:linear-gradient(180deg,var(--brand),var(--brand-2)); color:#1f1308; border:0; cursor:pointer; font-weight:800}
+    .empty{color:var(--muted); text-align:center; padding:40px}
+
+    dialog#player{width:min(980px,92vw); border:1px solid var(--border); padding:0; border-radius:16px; overflow:hidden; background:#ffffff; box-shadow:0 30px 80px rgba(0,0,0,.2)}
+    dialog#player::backdrop{background:rgba(0,0,0,.4)}
+    .player-header{display:flex; align-items:center; justify-content:space-between; padding:10px 12px; background:#f3f4f6; border-bottom:1px solid var(--border)}
+    .player-title{font-weight:700}
+    .close{background:#fff; color:#111; border:1px solid var(--border); cursor:pointer; padding:6px 10px; border-radius:8px}
+    video{width:100%; height:auto; display:block; background:#000}
+    .player-meta{padding:10px 12px; color:#475569; background:#fafafa; border-top:1px solid var(--border)}
+
+    footer{border-top:1px solid var(--border); color:#6b7280; background:#fff}
+    footer .wrap{display:flex; gap:18px; justify-content:space-between; align-items:center}
+
+    @media (max-width:720px){ .controls{grid-template-columns:1fr} }
+  </style>
+</head>
+<body>
+  <header>
+    <div class="wrap">
+      <nav>
+        <div class="brand">
+          <!-- Use your uploaded logo file at images/logo.png -->
+          <img src="images/logo.png" alt="Mr. Peebles, M.D. logo" />
+        </div>
+        <span style="display:inline-block;padding:6px 10px;border-radius:999px;background:#fff3e9;color:#7a2e00;border:1px solid #ffd5b3;font-weight:700">Clips</span>
+      </nav>
+    </div>
+  </header>
+
+  <section class="wrap" aria-label="Controls">
+    <div class="controls">
+      <label class="control" title="Search by filename">
+        🔎 <input id="q" type="search" placeholder="Search clips… (e.g., hallway, blooper)" />
+      </label>
+      <label class="control" title="Sort order">
+        ↕️ <select id="sort">
+          <option value="newest">Newest first</option>
+          <option value="oldest">Oldest first</option>
+          <option value="az">A → Z</option>
+          <option value="za">Z → A</option>
+          <option value="longest">Longest first</option>
+        </select>
+      </label>
+    </div>
+  </section>
+
+  <section class="grid" id="grid" aria-label="Clips grid"></section>
+  <div class="empty" id="empty" hidden>No clips found in the folder.</div>
+
+  <dialog id="player">
+    <div class="player-header">
+      <div class="player-title" id="playerTitle">Playing…</div>
+      <button class="close" id="closePlayer" aria-label="Close">✕</button>
+    </div>
+    <video id="video" controls preload="metadata" poster=""></video>
+    <div class="player-meta" id="playerMeta"></div>
+  </dialog>
+
+  <footer>
+    <div class="wrap">
+      <div>© <span id="year"></span> Mr. Peebles, M.D.</div>
+    </div>
+  </footer>
+
+  <script>
+    // ---- Configuration ----
+    // Put your MP4/WEBM/M4V files in this folder relative to index.html.
+    // Example: /videos/clip1.mp4, /videos/behind-the-scenes.webm
+    // Folder containing your clips (relative to index.html)
+    const CLIPS_DIR = 'videos/';
+    const ACCEPT = ['.mp4', '.webm', '.m4v'];
+
+    // If you're on GitHub Pages with a custom domain, set these manually:
+    // const GH_OWNER = 'your-user-or-org';
+    // const GH_REPO  = 'your-repo';
+    // const GH_BRANCH = 'gh-pages'; // or 'main'
+    const GH_OWNER = '';
+    const GH_REPO  = '';
+    const GH_BRANCH = '';
+
+    const $ = (s, el=document) => el.querySelector(s);
+    const $$ = (s, el=document) => Array.from(el.querySelectorAll(s));
+    const fmt = (n)=> n.toString().padStart(2,'0');
+    const hms = (sec)=> `${Math.floor(sec/60)}:${fmt(Math.round(sec%60))}`;
+
+    const grid = $('#grid');
+    const empty = $('#empty');
+
+    async function listFilesFromDirectory(dir){
+      // Strategy 1: GitHub API (works on GitHub Pages even with directory listing disabled)
+      const ghItems = await tryGitHubAPI(dir);
+      if (ghItems && ghItems.length) return ghItems;
+
+      // Strategy 2: clips.json manifest (place a JSON array of filenames in the videos folder)
+      const manifest = await tryManifest(dir);
+      if (manifest && manifest.length) return manifest;
+
+      // Strategy 3: parse server directory listing (works on hosts that allow it)
+      const htmlList = await tryHTMLListing(dir);
+      if (htmlList && htmlList.length) return htmlList;
+
+      return [];
+    }
+
+    function ownerFromHost(){
+      // e.g., scoblish.github.io -> scoblish
+      const h = location.hostname; if(!h.endsWith('github.io')) return null;
+      return h.split('.github.io')[0];
+    }
+
+    function repoFromPath(){
+      // e.g., /mr-peebles-md/ -> mr-peebles-md (first segment)
+      const seg = location.pathname.split('/').filter(Boolean);
+      return seg.length ? seg[0] : null;
+    }
+
+    async function tryGitHubAPI(dir){
+      let owner = GH_OWNER || ownerFromHost();
+      let repo  = GH_REPO  || repoFromPath();
+      if(!owner || !repo) return null;
+
+      const path = dir.replace(/^\/+|\/+$/g,''); // 'videos'
+      const branches = [GH_BRANCH || 'gh-pages','main','master'];
+
+      for (const br of branches){
+        try{
+          const url = `https://api.github.com/repos/${owner}/${repo}/contents/${path}?ref=${encodeURIComponent(br)}`;
+          const res = await fetch(url, {headers:{'Accept':'application/vnd.github+json'}});
+          if(!res.ok) continue;
+          const data = await res.json();
+          const files = data
+            .filter(x => x.type === 'file' && ACCEPT.some(ext => x.name.toLowerCase().endsWith(ext)))
+            .map(x => new URL(x.download_url).href);
+          if(files.length) return files;
+        }catch{ /* try next */ }
+      }
+      return null;
+    }
+
+    async function tryManifest(dir){
+      try{
+        const res = await fetch(dir.replace(/\/$/,'') + '/clips.json', {cache:'no-store'});
+        if(!res.ok) return null;
+        const arr = await res.json();
+        return arr
+          .filter(name => ACCEPT.some(ext => name.toLowerCase().endsWith(ext)))
+          .map(name => new URL(name, location.origin + location.pathname.replace(/[^/]*$/,'') + dir).href);
+      }catch{ return null }
+    }
+
+    async function tryHTMLListing(dir){
+      try{
+        const res = await fetch(dir, {headers:{'Accept':'text/html'}});
+        if(!res.ok) return null;
+        const text = await res.text();
+        const doc = new DOMParser().parseFromString(text, 'text/html');
+        const links = [...doc.querySelectorAll('a')]
+          .map(a => a.getAttribute('href'))
+          .filter(h => h && !h.startsWith('?') && !h.startsWith('#'))
+          .map(h => decodeURIComponent(h));
+        const files = links
+          .filter(h => ACCEPT.some(ext => h.toLowerCase().endsWith(ext)))
+          .map(h => new URL(h, res.url).href);
+        return files;
+      }catch{ return null }
+    }
+
+    async function headLastModified(url){
+      try{
+        const r = await fetch(url, { method:'HEAD' });
+        // Some GitHub raw responses don't include Last-Modified; fall back to null
+        return r.headers.get('last-modified') ? new Date(r.headers.get('last-modified')) : null;
+      }catch{ return null }
+    }
+
+    async function getDuration(url){
+      return new Promise((resolve) => {
+        const v = document.createElement('video');
+        v.preload = 'metadata';
+        v.src = url;
+        v.addEventListener('loadedmetadata', () => {
+          resolve(isFinite(v.duration) ? v.duration : 0);
+          v.remove();
+        });
+        v.addEventListener('error', ()=>{ resolve(0); v.remove(); });
+      });
+    }
+
+    function nameFrom(url){
+      const u = new URL(url);
+      const f = u.pathname.split('/').filter(Boolean).pop();
+      return f || url;
+    }
+
+    function baseNoExt(filename){
+      const i = filename.lastIndexOf('.');
+      return i>0 ? filename.slice(0,i) : filename;
+    }
+
+    function cardTemplate(item){
+      const img = document.createElement('img');
+      img.alt = item.title + ' thumbnail';
+      img.src = `${CLIPS_DIR}${baseNoExt(item.filename)}.jpg`;
+      img.onerror = () => { img.replaceWith(placeholder(item)); };
+
+      const art = document.createElement('article');
+      art.className = 'card';
+      art.innerHTML = `
+        <div class="thumb"></div>
+        <div class="meta"><h3 title="${item.title}">${item.title}</h3></div>
+        <button class="play">▶ Play</button>`;
+      const thumb = art.querySelector('.thumb');
+      thumb.appendChild(img);
+      const dur = document.createElement('div');
+      dur.className = 'duration';
+      dur.textContent = item.duration? hms(item.duration): '';
+      thumb.appendChild(dur);
+
+      art.querySelector('.play').addEventListener('click', ()=> openPlayer(item));
+      return art;
+    }
+
+    function placeholder(item){
+      const d = document.createElement('div');
+      d.className = 'placeholder';
+      d.innerHTML = `<img src="images/logo.png" alt="logo" style="height:36px;opacity:.9">`;
+      return d;
+    }
+
+    const dlg = document.getElementById('player');
+    const video = document.getElementById('video');
+
+    function openPlayer(item){
+      document.getElementById('playerTitle').textContent = item.title;
+      document.getElementById('playerMeta').textContent = `${item.filesize || ''} ${item.lastModified? '• '+item.lastModified.toLocaleString():''} ${item.duration? '• '+hms(item.duration): ''}`.trim();
+      video.pause(); video.innerHTML='';
+      const src = document.createElement('source');
+      src.src = item.url; src.type = 'video/mp4';
+      video.appendChild(src);
+      if (typeof dlg.showModal === 'function') dlg.showModal();
+      video.play().catch(()=>{});
+    }
+
+    document.getElementById('closePlayer').addEventListener('click',()=>{ video.pause(); dlg.close(); });
+
+    async function main(){
+      let urls = await listFilesFromDirectory(CLIPS_DIR);
+      // fetch durations and last-modified concurrently
+      const items = await Promise.all(urls.map(async (u)=>{
+        const title = nameFrom(u);
+        const [lastMod, duration] = await Promise.all([headLastModified(u), getDuration(u)]);
+        return { url:u, filename:title, title, lastModified:lastMod, duration };
+      }));
+      state.all = items;
+      render();
+    }
+
+    const state = { all:[], q:'', sort:'newest' };
+
+    function render(){
+      const q = ($('#q').value||'').toLowerCase();
+      const sort = $('#sort').value;
+      let list = state.all.filter(i => i.title.toLowerCase().includes(q));
+      if (sort==='az') list.sort((a,b)=> a.title.localeCompare(b.title));
+      if (sort==='za') list.sort((a,b)=> b.title.localeCompare(a.title));
+      if (sort==='newest') list.sort((a,b)=> (b.lastModified||0) - (a.lastModified||0));
+      if (sort==='oldest') list.sort((a,b)=> (a.lastModified||0) - (b.lastModified||0));
+      if (sort==='longest') list.sort((a,b)=> (b.duration||0) - (a.duration||0));
+
+      grid.innerHTML = '';
+      list.forEach(item => grid.appendChild(cardTemplate(item)));
+      empty.hidden = list.length !== 0;
+    }
+
+    ['q','sort'].forEach(id => document.getElementById(id).addEventListener('input', render));
+    document.getElementById('year').textContent = new Date().getFullYear();
+
+    // Close dialog with Escape
+    document.addEventListener('keydown',(e)=>{ if(e.key==='Escape' && dlg.open){ dlg.close(); }});
+
+    main().catch(err=>{ console.error('Listing error:', err); empty.hidden=false; empty.textContent='No clips found (or directory listing disabled).'; });
+  </script>
+</body>
+</html>
