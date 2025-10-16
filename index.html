@@ -212,13 +212,23 @@
       });
     }
 
-    function nameFrom(url){
-      const u = new URL(url);
-      const f = u.pathname.split('/').filter(Boolean).pop();
-      return f || url;
+    // Decode the filename (fixes %20) and return last segment
+    function decodedFilenameFrom(url){
+      try{
+        const u = new URL(url, location.href);
+        const last = u.pathname.split('/').filter(Boolean).pop() || url;
+        return decodeURIComponent(last);
+      }catch{
+        return url;
+      }
     }
 
-    // ---------- NEW: Generate real thumbnails from video frames ----------
+    function baseNoExt(filename){
+      const i = filename.lastIndexOf('.');
+      return i>0 ? filename.slice(0,i) : filename;
+    }
+
+    // ---------- Generate real thumbnails from video frames ----------
     const thumbCache = new Map(); // url -> dataURL
 
     async function generateThumbnail(url, timeHintSec){
@@ -226,8 +236,7 @@
 
       const dataUrl = await new Promise((resolve) => {
         const v = document.createElement('video');
-        // Helps if files are cross-origin with proper CORS headers
-        v.crossOrigin = 'anonymous';
+        v.crossOrigin = 'anonymous'; // needs CORS headers on the video files
         v.muted = true;
         v.preload = 'auto';
         v.src = url;
@@ -235,7 +244,6 @@
         let targetTime = Math.max(0, timeHintSec || 2);
 
         const cleanup = () => { v.pause(); v.src = ''; v.load(); v.remove(); };
-
         const onFail = () => { cleanup(); resolve(null); };
 
         v.addEventListener('error', onFail);
@@ -243,10 +251,8 @@
           if (!isFinite(v.duration) || v.duration === 0) {
             targetTime = 0.1;
           } else {
-            // Aim for 2s, or the middle if shorter
             targetTime = Math.min(2, v.duration / 2);
           }
-          // Some browsers require a play-then-pause before seeking
           v.currentTime = Math.min(Math.max(0.1, targetTime), (v.duration || 10) - 0.1);
         });
 
@@ -255,7 +261,6 @@
             const canvas = document.createElement('canvas');
             const w = v.videoWidth || 640;
             const h = v.videoHeight || 360;
-            // Keep aspect ratio but fit our card height
             const targetH = 150;
             const targetW = Math.round((w / h) * targetH);
             canvas.width = targetW;
@@ -281,12 +286,7 @@
       d.textContent = 'Loading…';
       return d;
     }
-    // -------------------------------------------------------------------
-
-    function baseNoExt(filename){
-      const i = filename.lastIndexOf('.');
-      return i>0 ? filename.slice(0,i) : filename;
-    }
+    // ---------------------------------------------------------------
 
     function cardTemplate(item){
       const art = document.createElement('article');
@@ -297,23 +297,17 @@
         <button class="play">▶ Play</button>`;
       const thumb = art.querySelector('.thumb');
 
-      // Start with a placeholder, then swap to the captured frame
       const ph = placeholder();
       thumb.appendChild(ph);
 
-      // Add duration badge early (will be filled if we have it)
       const dur = document.createElement('div');
       dur.className = 'duration';
       dur.textContent = item.duration ? hms(item.duration) : '';
       thumb.appendChild(dur);
 
-      // Try to use pre-made JPG if you still want (optional). Commented out since you asked for snapshots only.
-      // const fallbackJpg = `${CLIPS_DIR}${baseNoExt(item.filename)}.jpg`;
-
-      // Generate snapshot
       generateThumbnail(item.url, item.duration ? Math.min(2, item.duration / 2) : 2)
         .then(dataUrl => {
-          if (!dataUrl) return; // keep placeholder if failed (e.g., CORS)
+          if (!dataUrl) return; // keep placeholder if failed (e.g., no CORS)
           const img = document.createElement('img');
           img.alt = item.title + ' thumbnail';
           img.src = dataUrl;
@@ -330,23 +324,41 @@
 
     function openPlayer(item){
       document.getElementById('playerTitle').textContent = item.title;
-      document.getElementById('playerMeta').textContent = `${item.filesize || ''} ${item.lastModified? '• '+item.lastModified.toLocaleString():''} ${item.duration? '• '+hms(item.duration): ''}`.trim();
-      video.pause(); video.innerHTML='';
-      const src = document.createElement('source');
-      src.src = item.url; src.type = 'video/mp4';
-      video.appendChild(src);
+      document.getElementById('playerMeta').textContent =
+        `${item.filesize || ''} ${item.lastModified? '• '+item.lastModified.toLocaleString():''} ${item.duration? '• '+hms(item.duration): ''}`.trim();
+
+      // Fully reset previous media so the right clip plays
+      video.pause();
+      video.removeAttribute('src');
+      video.load(); // flush buffered resource
+
+      // Point to the new source (let browser infer type from extension)
+      video.src = item.url;
+
       if (typeof dlg.showModal === 'function') dlg.showModal();
-      video.play().catch(()=>{});
+
+      // Ensure the new source is ready before attempting to play
+      const onMeta = () => {
+        video.removeEventListener('loadedmetadata', onMeta);
+        video.play().catch(()=>{});
+      };
+      video.addEventListener('loadedmetadata', onMeta, { once: true });
     }
 
-    document.getElementById('closePlayer').addEventListener('click',()=>{ video.pause(); dlg.close(); });
+    document.getElementById('closePlayer').addEventListener('click', () => {
+      video.pause();
+      video.removeAttribute('src'); // unload current resource
+      video.load();
+      dlg.close();
+    });
 
     async function main(){
       let urls = await listFilesFromDirectory(CLIPS_DIR);
       const items = await Promise.all(urls.map(async (u)=>{
-        const title = nameFrom(u);
+        const fname = decodedFilenameFrom(u);        // decode %20 -> space
+        const title = baseNoExt(fname);              // drop extension for display
         const [lastMod, duration] = await Promise.all([headLastModified(u), getDuration(u)]);
-        return { url:u, filename:title, title, lastModified:lastMod, duration };
+        return { url:u, filename:fname, title, lastModified:lastMod, duration };
       }));
       state.all = items;
       render();
