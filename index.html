@@ -19,7 +19,8 @@
     .wrap{max-width:1200px; margin:0 auto; padding:16px}
     nav{display:flex; align-items:center; justify-content:space-between}
     .brand{display:flex; gap:12px; align-items:center}
-    .brand img{height:44px; width:auto; object-fit:contain}
+    /* Bigger logo */
+    .brand img{height:72px; width:auto; object-fit:contain}
 
     .controls{display:grid; grid-template-columns:1.5fr 0.8fr; gap:12px; margin:22px auto; max-width:1200px}
     .control{background:var(--card); padding:10px 12px; border:1px solid var(--border); border-radius:var(--radius-sm); display:flex; gap:10px; align-items:center; box-shadow:var(--shadow)}
@@ -47,7 +48,10 @@
     footer{border-top:1px solid var(--border); color:#6b7280; background:#fff}
     footer .wrap{display:flex; gap:18px; justify-content:space-between; align-items:center}
 
-    @media (max-width:720px){ .controls{grid-template-columns:1fr} }
+    @media (max-width:720px){
+      .controls{grid-template-columns:1fr}
+      .brand img{height:56px}
+    }
   </style>
 </head>
 <body>
@@ -55,7 +59,6 @@
     <div class="wrap">
       <nav>
         <div class="brand">
-          <!-- Use your uploaded logo file at images/logo.png -->
           <img src="images/logo.png" alt="Mr. Peebles, M.D. logo" />
         </div>
         <span style="display:inline-block;padding:6px 10px;border-radius:999px;background:#fff3e9;color:#7a2e00;border:1px solid #ffd5b3;font-weight:700">Clips</span>
@@ -100,16 +103,10 @@
 
   <script>
     // ---- Configuration ----
-    // Put your MP4/WEBM/M4V files in this folder relative to index.html.
-    // Example: /videos/clip1.mp4, /videos/behind-the-scenes.webm
-    // Folder containing your clips (relative to index.html)
     const CLIPS_DIR = 'videos/';
     const ACCEPT = ['.mp4', '.webm', '.m4v'];
 
-    // If you're on GitHub Pages with a custom domain, set these manually:
-    // const GH_OWNER = 'your-user-or-org';
-    // const GH_REPO  = 'your-repo';
-    // const GH_BRANCH = 'gh-pages'; // or 'main'
+    // const GH_OWNER = ''; const GH_REPO  = ''; const GH_BRANCH = '';
     const GH_OWNER = '';
     const GH_REPO  = '';
     const GH_BRANCH = '';
@@ -123,15 +120,12 @@
     const empty = $('#empty');
 
     async function listFilesFromDirectory(dir){
-      // Strategy 1: GitHub API (works on GitHub Pages even with directory listing disabled)
       const ghItems = await tryGitHubAPI(dir);
       if (ghItems && ghItems.length) return ghItems;
 
-      // Strategy 2: clips.json manifest (place a JSON array of filenames in the videos folder)
       const manifest = await tryManifest(dir);
       if (manifest && manifest.length) return manifest;
 
-      // Strategy 3: parse server directory listing (works on hosts that allow it)
       const htmlList = await tryHTMLListing(dir);
       if (htmlList && htmlList.length) return htmlList;
 
@@ -139,13 +133,11 @@
     }
 
     function ownerFromHost(){
-      // e.g., scoblish.github.io -> scoblish
       const h = location.hostname; if(!h.endsWith('github.io')) return null;
       return h.split('.github.io')[0];
     }
 
     function repoFromPath(){
-      // e.g., /mr-peebles-md/ -> mr-peebles-md (first segment)
       const seg = location.pathname.split('/').filter(Boolean);
       return seg.length ? seg[0] : null;
     }
@@ -155,7 +147,7 @@
       let repo  = GH_REPO  || repoFromPath();
       if(!owner || !repo) return null;
 
-      const path = dir.replace(/^\/+|\/+$/g,''); // 'videos'
+      const path = dir.replace(/^\/+|\/+$/g,'');
       const branches = [GH_BRANCH || 'gh-pages','main','master'];
 
       for (const br of branches){
@@ -204,7 +196,6 @@
     async function headLastModified(url){
       try{
         const r = await fetch(url, { method:'HEAD' });
-        // Some GitHub raw responses don't include Last-Modified; fall back to null
         return r.headers.get('last-modified') ? new Date(r.headers.get('last-modified')) : null;
       }catch{ return null }
     }
@@ -228,17 +219,77 @@
       return f || url;
     }
 
+    // ---------- NEW: Generate real thumbnails from video frames ----------
+    const thumbCache = new Map(); // url -> dataURL
+
+    async function generateThumbnail(url, timeHintSec){
+      if (thumbCache.has(url)) return thumbCache.get(url);
+
+      const dataUrl = await new Promise((resolve) => {
+        const v = document.createElement('video');
+        // Helps if files are cross-origin with proper CORS headers
+        v.crossOrigin = 'anonymous';
+        v.muted = true;
+        v.preload = 'auto';
+        v.src = url;
+
+        let targetTime = Math.max(0, timeHintSec || 2);
+
+        const cleanup = () => { v.pause(); v.src = ''; v.load(); v.remove(); };
+
+        const onFail = () => { cleanup(); resolve(null); };
+
+        v.addEventListener('error', onFail);
+        v.addEventListener('loadedmetadata', () => {
+          if (!isFinite(v.duration) || v.duration === 0) {
+            targetTime = 0.1;
+          } else {
+            // Aim for 2s, or the middle if shorter
+            targetTime = Math.min(2, v.duration / 2);
+          }
+          // Some browsers require a play-then-pause before seeking
+          v.currentTime = Math.min(Math.max(0.1, targetTime), (v.duration || 10) - 0.1);
+        });
+
+        v.addEventListener('seeked', () => {
+          try{
+            const canvas = document.createElement('canvas');
+            const w = v.videoWidth || 640;
+            const h = v.videoHeight || 360;
+            // Keep aspect ratio but fit our card height
+            const targetH = 150;
+            const targetW = Math.round((w / h) * targetH);
+            canvas.width = targetW;
+            canvas.height = targetH;
+            const ctx = canvas.getContext('2d');
+            ctx.drawImage(v, 0, 0, targetW, targetH);
+            const url = canvas.toDataURL('image/jpeg', 0.8);
+            cleanup();
+            resolve(url);
+          }catch(e){
+            onFail();
+          }
+        });
+      });
+
+      if (dataUrl) thumbCache.set(url, dataUrl);
+      return dataUrl;
+    }
+
+    function placeholder(){
+      const d = document.createElement('div');
+      d.className = 'placeholder';
+      d.textContent = 'Loading…';
+      return d;
+    }
+    // -------------------------------------------------------------------
+
     function baseNoExt(filename){
       const i = filename.lastIndexOf('.');
       return i>0 ? filename.slice(0,i) : filename;
     }
 
     function cardTemplate(item){
-      const img = document.createElement('img');
-      img.alt = item.title + ' thumbnail';
-      img.src = `${CLIPS_DIR}${baseNoExt(item.filename)}.jpg`;
-      img.onerror = () => { img.replaceWith(placeholder(item)); };
-
       const art = document.createElement('article');
       art.className = 'card';
       art.innerHTML = `
@@ -246,21 +297,33 @@
         <div class="meta"><h3 title="${item.title}">${item.title}</h3></div>
         <button class="play">▶ Play</button>`;
       const thumb = art.querySelector('.thumb');
-      thumb.appendChild(img);
+
+      // Start with a placeholder, then swap to the captured frame
+      const ph = placeholder();
+      thumb.appendChild(ph);
+
+      // Add duration badge early (will be filled if we have it)
       const dur = document.createElement('div');
       dur.className = 'duration';
-      dur.textContent = item.duration? hms(item.duration): '';
+      dur.textContent = item.duration ? hms(item.duration) : '';
       thumb.appendChild(dur);
+
+      // Try to use pre-made JPG if you still want (optional). Commented out since you asked for snapshots only.
+      // const fallbackJpg = `${CLIPS_DIR}${baseNoExt(item.filename)}.jpg`;
+
+      // Generate snapshot
+      generateThumbnail(item.url, item.duration ? Math.min(2, item.duration / 2) : 2)
+        .then(dataUrl => {
+          if (!dataUrl) return; // keep placeholder if failed (e.g., CORS)
+          const img = document.createElement('img');
+          img.alt = item.title + ' thumbnail';
+          img.src = dataUrl;
+          ph.replaceWith(img);
+        })
+        .catch(()=>{ /* leave placeholder */ });
 
       art.querySelector('.play').addEventListener('click', ()=> openPlayer(item));
       return art;
-    }
-
-    function placeholder(item){
-      const d = document.createElement('div');
-      d.className = 'placeholder';
-      d.innerHTML = `<img src="images/logo.png" alt="logo" style="height:36px;opacity:.9">`;
-      return d;
     }
 
     const dlg = document.getElementById('player');
@@ -281,7 +344,6 @@
 
     async function main(){
       let urls = await listFilesFromDirectory(CLIPS_DIR);
-      // fetch durations and last-modified concurrently
       const items = await Promise.all(urls.map(async (u)=>{
         const title = nameFrom(u);
         const [lastMod, duration] = await Promise.all([headLastModified(u), getDuration(u)]);
@@ -314,7 +376,11 @@
     // Close dialog with Escape
     document.addEventListener('keydown',(e)=>{ if(e.key==='Escape' && dlg.open){ dlg.close(); }});
 
-    main().catch(err=>{ console.error('Listing error:', err); empty.hidden=false; empty.textContent='No clips found (or directory listing disabled).'; });
+    main().catch(err=>{
+      console.error('Listing error:', err);
+      empty.hidden=false;
+      empty.textContent='No clips found (or directory listing disabled).';
+    });
   </script>
 </body>
 </html>
