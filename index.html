@@ -17,7 +17,6 @@
     a{color:inherit; text-decoration:none}
     header{position:sticky; top:0; backdrop-filter:saturate(140%) blur(8px); background:rgba(255,255,255,.8); border-bottom:1px solid var(--border); z-index:50}
     .wrap{max-width:1200px; margin:0 auto; padding:16px}
-    /* make logo sit on the header bottom edge */
     header .wrap{padding:16px 16px 0}
     nav{display:flex; align-items:flex-end; justify-content:space-between}
     .brand{display:flex; gap:12px; align-items:center}
@@ -107,9 +106,16 @@
     const CLIPS_DIR = 'videos/';
     const ACCEPT = ['.mp4', '.webm', '.m4v'];
 
-    const GH_OWNER = 'smcnys';
-    const GH_REPO  = 'mrpeebles';
+    const GH_OWNER  = 'smcnys';
+    const GH_REPO   = 'mrpeebles';
     const GH_BRANCH = 'main';
+
+    // Optional: token to raise rate limit (leave '' for unauthenticated)
+    const GH_TOKEN = ''; // e.g., 'ghp_xxxxxxxxxxxxxxxxxxxxx'
+    const GH_HEADERS = {
+      'Accept': 'application/vnd.github+json',
+      ...(GH_TOKEN ? { 'Authorization': `Bearer ${GH_TOKEN}` } : {})
+    };
 
     const $ = (s, el=document) => el.querySelector(s);
     const $$ = (s, el=document) => Array.from(el.querySelectorAll(s));
@@ -153,12 +159,12 @@
       for (const br of branches){
         try{
           const url = `https://api.github.com/repos/${owner}/${repo}/contents/${path}?ref=${encodeURIComponent(br)}`;
-          const res = await fetch(url, {headers:{'Accept':'application/vnd.github+json'}});
+          const res = await fetch(url, { headers: GH_HEADERS });
           if(!res.ok) continue;
           const data = await res.json();
           const files = data
             .filter(x => x.type === 'file' && ACCEPT.some(ext => x.name.toLowerCase().endsWith(ext)))
-            .map(x => new URL(x.download_url).href);
+            .map(x => ({ url: new URL(x.download_url).href, path: x.path, branch: br }));
           if(files.length) return files;
         }catch{ /* try next */ }
       }
@@ -172,7 +178,11 @@
         const arr = await res.json();
         return arr
           .filter(name => ACCEPT.some(ext => name.toLowerCase().endsWith(ext)))
-          .map(name => new URL(name, location.origin + location.pathname.replace(/[^/]*$/,'') + dir).href);
+          .map(name => {
+            const url = new URL(name, location.origin + location.pathname.replace(/[^/]*$/,'') + dir).href;
+            const guess = guessRepoPathFromUrl(url);
+            return { url, path: guess.path, branch: guess.branch };
+          });
       }catch{ return null }
     }
 
@@ -188,12 +198,52 @@
           .map(h => decodeURIComponent(h));
         const files = links
           .filter(h => ACCEPT.some(ext => h.toLowerCase().endsWith(ext)))
-          .map(h => new URL(h, res.url).href);
+          .map(h => {
+            const url = new URL(h, res.url).href;
+            const guess = guessRepoPathFromUrl(url);
+            return { url, path: guess.path, branch: guess.branch };
+          });
         return files;
       }catch{ return null }
     }
 
-    // Get reliable last-modified timestamp (ms). HEAD first, then tiny ranged GET.
+    // Try to recover repo path/branch from a file URL
+    function guessRepoPathFromUrl(u){
+      try{
+        const url = new URL(u, location.href);
+
+        // raw.githubusercontent.com/<owner>/<repo>/<branch>/...
+        if(url.hostname === 'raw.githubusercontent.com'){
+          const [, owner, repo, branch, ...rest] = url.pathname.split('/').filter(Boolean);
+          return { path: rest.join('/'), branch };
+        }
+
+        // GitHub Pages or other static hosting: assume site path mirrors repo structure
+        const idx = url.pathname.lastIndexOf(CLIPS_DIR);
+        if(idx !== -1){
+          const tail = url.pathname.slice(idx).replace(/^\/+/,'');
+          return { path: tail, branch: (GH_BRANCH || 'gh-pages') };
+        }
+      }catch{}
+      return { path: null, branch: (GH_BRANCH || 'gh-pages') };
+    }
+
+    // GitHub: latest commit that touched a file -> timestamp (ms)
+    async function getGitHubLastCommitMs({ owner, repo, branch, path }){
+      if(!owner || !repo || !branch || !path) return NaN;
+      try{
+        const api = `https://api.github.com/repos/${owner}/${repo}/commits?path=${encodeURIComponent(path)}&sha=${encodeURIComponent(branch)}&per_page=1`;
+        const res = await fetch(api, { headers: GH_HEADERS });
+        if(!res.ok) return NaN;
+        const arr = await res.json();
+        if(!Array.isArray(arr) || !arr.length) return NaN;
+        const c = arr[0].commit;
+        const iso = (c && (c.committer?.date || c.author?.date)) || null;
+        return iso ? new Date(iso).getTime() : NaN;
+      }catch{ return NaN }
+    }
+
+    // Fallback: get reliable last-modified timestamp (ms). HEAD first, then tiny ranged GET.
     async function headLastModifiedMs(url){
       try{
         const r = await fetch(url, { method:'HEAD' });
@@ -360,14 +410,44 @@
       dlg.close();
     });
 
+    function ghRepoInfo(){
+      return {
+        owner: GH_OWNER || ownerFromHost(),
+        repo:  GH_REPO  || repoFromPath()
+      };
+    }
+
     async function main(){
-      let urls = await listFilesFromDirectory(CLIPS_DIR);
-      const items = await Promise.all(urls.map(async (u)=>{
-        const fname = decodedFilenameFrom(u);
+      let rawList = await listFilesFromDirectory(CLIPS_DIR);
+
+      // Normalize to objects { url, path, branch }
+      const list = rawList.map(entry => {
+        if(typeof entry === 'string'){
+          const guess = guessRepoPathFromUrl(entry);
+          return { url: entry, path: guess.path, branch: guess.branch };
+        }
+        return entry; // already {url, path, branch}
+      });
+
+      const { owner, repo } = ghRepoInfo();
+
+      const items = await Promise.all(list.map(async (it) => {
+        const fname = decodedFilenameFrom(it.url);
         const title = baseNoExt(fname);
-        const [lastModMs, duration] = await Promise.all([headLastModifiedMs(u), getDuration(u)]);
-        return { url:u, filename:fname, title, lastModifiedMs:lastModMs, duration };
+
+        // Prefer GitHub last commit date if we can
+        let commitMs = NaN;
+        if(owner && repo && it.path){
+          commitMs = await getGitHubLastCommitMs({ owner, repo, branch: it.branch || GH_BRANCH || 'main', path: it.path });
+        }
+
+        // Fallback to HTTP Last-Modified if commitMs failed
+        const lastModMs = Number.isFinite(commitMs) ? commitMs : await headLastModifiedMs(it.url);
+
+        const duration = await getDuration(it.url);
+        return { url: it.url, filename: fname, title, lastModifiedMs: lastModMs, duration };
       }));
+
       state.all = items;
       render();
     }
@@ -387,7 +467,10 @@
         list.sort((a,b)=>{
           const am = Number.isFinite(a.lastModifiedMs) ? a.lastModifiedMs : -Infinity;
           const bm = Number.isFinite(b.lastModifiedMs) ? b.lastModifiedMs : -Infinity;
-          return bm - am; // newest first; unknowns at end
+          if(!Number.isFinite(a.lastModifiedMs) && !Number.isFinite(b.lastModifiedMs)) return 0;
+          if(!Number.isFinite(a.lastModifiedMs)) return 1;  // a unknown -> after b
+          if(!Number.isFinite(b.lastModifiedMs)) return -1; // b unknown -> after a
+          return bm - am; // newest first
         });
       }
 
@@ -395,7 +478,10 @@
         list.sort((a,b)=>{
           const am = Number.isFinite(a.lastModifiedMs) ? a.lastModifiedMs : +Infinity;
           const bm = Number.isFinite(b.lastModifiedMs) ? b.lastModifiedMs : +Infinity;
-          return am - bm; // oldest first; unknowns at start
+          if(!Number.isFinite(a.lastModifiedMs) && !Number.isFinite(b.lastModifiedMs)) return 0;
+          if(!Number.isFinite(a.lastModifiedMs)) return 1;  // a unknown -> after b
+          if(!Number.isFinite(b.lastModifiedMs)) return -1; // b unknown -> after a
+          return am - bm; // oldest first
         });
       }
 
