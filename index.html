@@ -17,13 +17,11 @@
     a{color:inherit; text-decoration:none}
     header{position:sticky; top:0; backdrop-filter:saturate(140%) blur(8px); background:rgba(255,255,255,.8); border-bottom:1px solid var(--border); z-index:50}
     .wrap{max-width:1200px; margin:0 auto; padding:16px}
-    nav{display:flex; align-items:flex-end; justify-content:space-between}        /* bottom-align content */
-    .brand{display:flex; gap:12px; align-items:center}
-    /* Bigger logo */
-    .brand img{height:200px; width:auto; object-fit:contain; display:block}       /* remove baseline gap */
-
-    /* tighten header: no bottom padding so logo hugs header bottom */
+    /* make logo sit on the header bottom edge */
     header .wrap{padding:16px 16px 0}
+    nav{display:flex; align-items:flex-end; justify-content:space-between}
+    .brand{display:flex; gap:12px; align-items:center}
+    .brand img{height:200px; width:auto; object-fit:contain; display:block}
 
     .controls{display:grid; grid-template-columns:1.5fr 0.8fr; gap:12px; margin:22px auto; max-width:1200px}
     .control{background:var(--card); padding:10px 12px; border:1px solid var(--border); border-radius:var(--radius-sm); display:flex; gap:10px; align-items:center; box-shadow:var(--shadow)}
@@ -109,10 +107,9 @@
     const CLIPS_DIR = 'videos/';
     const ACCEPT = ['.mp4', '.webm', '.m4v'];
 
-    // const GH_OWNER = ''; const GH_REPO  = ''; const GH_BRANCH = '';
-    const GH_OWNER = 'smcnys';
-    const GH_REPO  = 'mrpeebles';
-    const GH_BRANCH = 'main';
+    const GH_OWNER = '';
+    const GH_REPO  = '';
+    const GH_BRANCH = '';
 
     const $ = (s, el=document) => el.querySelector(s);
     const $$ = (s, el=document) => Array.from(el.querySelectorAll(s));
@@ -196,11 +193,19 @@
       }catch{ return null }
     }
 
-    async function headLastModified(url){
+    // Get reliable last-modified timestamp (ms). HEAD first, then tiny ranged GET.
+    async function headLastModifiedMs(url){
       try{
         const r = await fetch(url, { method:'HEAD' });
-        return r.headers.get('last-modified') ? new Date(r.headers.get('last-modified')) : null;
-      }catch{ return null }
+        const h = r.headers.get('last-modified');
+        if (h) return new Date(h).getTime();
+      }catch{}
+      try{
+        const r = await fetch(url, { method:'GET', headers:{ 'Range':'bytes=0-0' } });
+        const h = r.headers.get('last-modified');
+        if (h) return new Date(h).getTime();
+      }catch{}
+      return NaN;
     }
 
     async function getDuration(url){
@@ -216,7 +221,6 @@
       });
     }
 
-    // Decode the filename (fixes %20) and return last segment
     function decodedFilenameFrom(url){
       try{
         const u = new URL(url, location.href);
@@ -232,15 +236,15 @@
       return i>0 ? filename.slice(0,i) : filename;
     }
 
-    // ---------- Generate real thumbnails from video frames ----------
-    const thumbCache = new Map(); // url -> dataURL
+    // ---------- Thumbnails ----------
+    const thumbCache = new Map();
 
     async function generateThumbnail(url, timeHintSec){
       if (thumbCache.has(url)) return thumbCache.get(url);
 
       const dataUrl = await new Promise((resolve) => {
         const v = document.createElement('video');
-        v.crossOrigin = 'anonymous'; // needs CORS headers on the video files
+        v.crossOrigin = 'anonymous';
         v.muted = true;
         v.preload = 'auto';
         v.src = url;
@@ -290,7 +294,7 @@
       d.textContent = 'Loading…';
       return d;
     }
-    // ---------------------------------------------------------------
+    // -------------------------------
 
     function cardTemplate(item){
       const art = document.createElement('article');
@@ -311,13 +315,13 @@
 
       generateThumbnail(item.url, item.duration ? Math.min(2, item.duration / 2) : 2)
         .then(dataUrl => {
-          if (!dataUrl) return; // keep placeholder if failed (e.g., no CORS)
+          if (!dataUrl) return;
           const img = document.createElement('img');
           img.alt = item.title + ' thumbnail';
           img.src = dataUrl;
           ph.replaceWith(img);
         })
-        .catch(()=>{ /* leave placeholder */ });
+        .catch(()=>{});
 
       art.querySelector('.play').addEventListener('click', ()=> openPlayer(item));
       return art;
@@ -328,20 +332,20 @@
 
     function openPlayer(item){
       document.getElementById('playerTitle').textContent = item.title;
-      document.getElementById('playerMeta').textContent =
-        `${item.filesize || ''} ${item.lastModified? '• '+item.lastModified.toLocaleString():''} ${item.duration? '• '+hms(item.duration): ''}`.trim();
 
-      // Fully reset previous media so the right clip plays
+      const last = Number.isFinite(item.lastModifiedMs) ? new Date(item.lastModifiedMs) : null;
+      const metaBits = [];
+      if (last) metaBits.push(last.toLocaleString());
+      if (item.duration) metaBits.push(hms(item.duration));
+      document.getElementById('playerMeta').textContent = metaBits.join(' • ');
+
       video.pause();
       video.removeAttribute('src');
-      video.load(); // flush buffered resource
-
-      // Point to the new source (let browser infer type from extension)
+      video.load();
       video.src = item.url;
 
       if (typeof dlg.showModal === 'function') dlg.showModal();
 
-      // Ensure the new source is ready before attempting to play
       const onMeta = () => {
         video.removeEventListener('loadedmetadata', onMeta);
         video.play().catch(()=>{});
@@ -351,7 +355,7 @@
 
     document.getElementById('closePlayer').addEventListener('click', () => {
       video.pause();
-      video.removeAttribute('src'); // unload current resource
+      video.removeAttribute('src');
       video.load();
       dlg.close();
     });
@@ -359,10 +363,10 @@
     async function main(){
       let urls = await listFilesFromDirectory(CLIPS_DIR);
       const items = await Promise.all(urls.map(async (u)=>{
-        const fname = decodedFilenameFrom(u);        // decode %20 -> space
-        const title = baseNoExt(fname);              // drop extension for display
-        const [lastMod, duration] = await Promise.all([headLastModified(u), getDuration(u)]);
-        return { url:u, filename:fname, title, lastModified:lastMod, duration };
+        const fname = decodedFilenameFrom(u);
+        const title = baseNoExt(fname);
+        const [lastModMs, duration] = await Promise.all([headLastModifiedMs(u), getDuration(u)]);
+        return { url:u, filename:fname, title, lastModifiedMs:lastModMs, duration };
       }));
       state.all = items;
       render();
@@ -374,18 +378,33 @@
       const q = ($('#q').value||'').toLowerCase();
       const sort = $('#sort').value;
       let list = state.all.filter(i => i.title.toLowerCase().includes(q));
+
       if (sort==='az') list.sort((a,b)=> a.title.localeCompare(b.title));
       if (sort==='za') list.sort((a,b)=> b.title.localeCompare(a.title));
-      if (sort==='newest') list.sort((a,b)=> (b.lastModified||0) - (a.lastModified||0));
-      if (sort==='oldest') list.sort((a,b)=> (a.lastModified||0) - (b.lastModified||0));
       if (sort==='longest') list.sort((a,b)=> (b.duration||0) - (a.duration||0));
+
+      if (sort==='newest'){
+        list.sort((a,b)=>{
+          const am = Number.isFinite(a.lastModifiedMs) ? a.lastModifiedMs : -Infinity;
+          const bm = Number.isFinite(b.lastModifiedMs) ? b.lastModifiedMs : -Infinity;
+          return bm - am; // newest first; unknowns at end
+        });
+      }
+
+      if (sort==='oldest'){
+        list.sort((a,b)=>{
+          const am = Number.isFinite(a.lastModifiedMs) ? a.lastModifiedMs : +Infinity;
+          const bm = Number.isFinite(b.lastModifiedMs) ? b.lastModifiedMs : +Infinity;
+          return am - bm; // oldest first; unknowns at start
+        });
+      }
 
       grid.innerHTML = '';
       list.forEach(item => grid.appendChild(cardTemplate(item)));
       empty.hidden = list.length !== 0;
     }
 
-    // ✅ event wiring: input for text, change for select
+    // Events: input for search, change for select
     document.getElementById('q').addEventListener('input', render);
     document.getElementById('sort').addEventListener('change', render);
 
