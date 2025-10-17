@@ -53,6 +53,20 @@
       .brand img{height:56px}
       header .wrap{padding:12px 12px 0}
     }
+
+    /* NEW badge */
+    .badge-new{
+      position:absolute;
+      top:8px; left:8px;
+      padding:2px 6px;
+      font-size:.75rem;
+      font-weight:800;
+      letter-spacing:.3px;
+      color:#fff;
+      background:#dc2626; /* red-600 */
+      border-radius:999px;
+      box-shadow:0 2px 6px rgba(0,0,0,.15);
+    }
   </style>
 </head>
 <body>
@@ -357,6 +371,17 @@
 
       const ph = placeholder();
       thumb.appendChild(ph);
+
+      // NEW! badge if clip is < 12 hours old (based on commit/lastModified time)
+      const TWELVE_HOURS = 12 * 60 * 60 * 1000;
+      const isNew = Number.isFinite(item.lastModifiedMs) && (Date.now() - item.lastModifiedMs) <= TWELVE_HOURS;
+      if (isNew){
+        const badge = document.createElement('div');
+        badge.className = 'badge-new';
+        badge.textContent = 'NEW!';
+        badge.setAttribute('aria-label', 'New clip');
+        thumb.appendChild(badge);
+      }
 
       const dur = document.createElement('div');
       dur.className = 'duration';
