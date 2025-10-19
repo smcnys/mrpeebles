@@ -54,7 +54,6 @@
       header .wrap{padding:12px 12px 0}
     }
 
-    /* NEW badge */
     .badge-new{
       position:absolute;
       top:8px; left:8px;
@@ -63,7 +62,7 @@
       font-weight:800;
       letter-spacing:.3px;
       color:#fff;
-      background:#dc2626; /* red-600 */
+      background:#dc2626;
       border-radius:999px;
       box-shadow:0 2px 6px rgba(0,0,0,.15);
     }
@@ -221,18 +220,15 @@
       }catch{ return null }
     }
 
-    // Try to recover repo path/branch from a file URL
     function guessRepoPathFromUrl(u){
       try{
         const url = new URL(u, location.href);
 
-        // raw.githubusercontent.com/<owner>/<repo>/<branch>/...
         if(url.hostname === 'raw.githubusercontent.com'){
           const [, owner, repo, branch, ...rest] = url.pathname.split('/').filter(Boolean);
           return { path: rest.join('/'), branch };
         }
 
-        // GitHub Pages or other static hosting: assume site path mirrors repo structure
         const idx = url.pathname.lastIndexOf(CLIPS_DIR);
         if(idx !== -1){
           const tail = url.pathname.slice(idx).replace(/^\/+/,'');
@@ -242,7 +238,6 @@
       return { path: null, branch: (GH_BRANCH || 'gh-pages') };
     }
 
-    // GitHub: latest commit that touched a file -> timestamp (ms)
     async function getGitHubLastCommitMs({ owner, repo, branch, path }){
       if(!owner || !repo || !branch || !path) return NaN;
       try{
@@ -257,7 +252,6 @@
       }catch{ return NaN }
     }
 
-    // Fallback: get reliable last-modified timestamp (ms). HEAD first, then tiny ranged GET.
     async function headLastModifiedMs(url){
       try{
         const r = await fetch(url, { method:'HEAD' });
@@ -300,8 +294,26 @@
       return i>0 ? filename.slice(0,i) : filename;
     }
 
-    // ---------- Thumbnails ----------
+    // ---------- Thumbnails (black-frame resistant) ----------
     const thumbCache = new Map();
+    const CANDIDATE_TIMES = [0.5, 1.5, 3]; // seconds
+    const DARK_LUMA_THRESHOLD = 8;         // 0..255
+    const SAMPLE_STEP = 8;                  // pixel stride for sampling
+
+    function isDarkFrame(ctx, w, h){
+      const data = ctx.getImageData(0,0,w,h).data;
+      let sum = 0, count = 0;
+      for (let y = 0; y < h; y += SAMPLE_STEP){
+        for (let x = 0; x < w; x += SAMPLE_STEP){
+          const i = (y*w + x) * 4;
+          const r = data[i], g = data[i+1], b = data[i+2];
+          const y601 = 0.299*r + 0.587*g + 0.114*b;
+          sum += y601; count++;
+        }
+      }
+      const avg = sum / Math.max(1, count);
+      return avg < DARK_LUMA_THRESHOLD;
+    }
 
     async function generateThumbnail(url, timeHintSec){
       if (thumbCache.has(url)) return thumbCache.get(url);
@@ -310,40 +322,79 @@
         const v = document.createElement('video');
         v.crossOrigin = 'anonymous';
         v.muted = true;
-        v.preload = 'auto';
+        v.playsInline = true;
+        v.preload = 'metadata';
         v.src = url;
 
-        let targetTime = Math.max(0, timeHintSec || 2);
+        const cleanup = () => { try{ v.pause(); v.removeAttribute('src'); v.load(); }catch{} v.remove(); };
+        const fail = () => { cleanup(); resolve(null); };
 
-        const cleanup = () => { v.pause(); v.src = ''; v.load(); v.remove(); };
-        const onFail = () => { cleanup(); resolve(null); };
+        let times = [...CANDIDATE_TIMES];
+        if (Number.isFinite(timeHintSec) && timeHintSec > 0) times.unshift(timeHintSec);
 
-        v.addEventListener('error', onFail);
-        v.addEventListener('loadedmetadata', () => {
-          if (!isFinite(v.duration) || v.duration === 0) {
-            targetTime = 0.1;
-          } else {
-            targetTime = Math.min(2, v.duration / 2);
+        const canvas = document.createElement('canvas');
+        const ctx = canvas.getContext('2d');
+
+        function trySeek(t){
+          const safeT = Math.max(0.1, Math.min((v.duration || 10) - 0.1, t));
+          v.currentTime = safeT;
+        }
+
+        function drawAndCheck(){
+          const vw = v.videoWidth || 640;
+          const vh = v.videoHeight || 360;
+          const targetH = 150;
+          const targetW = Math.round((vw / vh) * targetH);
+          canvas.width = targetW;
+          canvas.height = targetH;
+
+          try{ ctx.drawImage(v, 0, 0, targetW, targetH); }
+          catch{ return false; }
+
+          if (!isDarkFrame(ctx, targetW, targetH)){
+            const out = canvas.toDataURL('image/jpeg', 0.8);
+            cleanup();
+            resolve(out);
+            return true;
           }
-          v.currentTime = Math.min(Math.max(0.1, targetTime), (v.duration || 10) - 0.1);
-        });
+          return false;
+        }
+
+        v.addEventListener('error', fail);
+
+        v.addEventListener('loadedmetadata', () => {
+          if (isFinite(v.duration) && v.duration > 0){
+            const tenth = Math.max(0.5, v.duration * 0.10);
+            times.push(tenth);
+            times.push(Math.min(2, v.duration / 2));
+          }
+          times = [...new Set(times)].sort((a,b)=>a-b);
+          trySeek(times[0]);
+        }, { once:true });
 
         v.addEventListener('seeked', () => {
-          try{
-            const canvas = document.createElement('canvas');
-            const w = v.videoWidth || 640;
-            const h = v.videoHeight || 360;
-            const targetH = 150;
-            const targetW = Math.round((w / h) * targetH);
-            canvas.width = targetW;
-            canvas.height = targetH;
-            const ctx = canvas.getContext('2d');
-            ctx.drawImage(v, 0, 0, targetW, targetH);
-            const url = canvas.toDataURL('image/jpeg', 0.8);
-            cleanup();
-            resolve(url);
-          }catch(e){
-            onFail();
+          if (drawAndCheck()) return;
+
+          times.shift();
+          if (times.length){
+            trySeek(times[0]);
+          }else{
+            // last resort: use middle frame even if dark
+            if (isFinite(v.duration) && v.duration > 0){
+              trySeek(Math.min(2, v.duration / 2));
+              v.addEventListener('seeked', () => {
+                try{
+                  const vw = v.videoWidth || 640, vh = v.videoHeight || 360;
+                  const h = 150, w = Math.round((vw / vh) * h);
+                  canvas.width = w; canvas.height = h;
+                  ctx.drawImage(v, 0, 0, w, h);
+                  const out = canvas.toDataURL('image/jpeg', 0.8);
+                  cleanup(); resolve(out);
+                }catch{ fail(); }
+              }, { once:true });
+            }else{
+              fail();
+            }
           }
         });
       });
@@ -358,7 +409,7 @@
       d.textContent = 'Loading…';
       return d;
     }
-    // -------------------------------
+    // --------------------------------------------------------
 
     function cardTemplate(item){
       const art = document.createElement('article');
@@ -372,7 +423,7 @@
       const ph = placeholder();
       thumb.appendChild(ph);
 
-      // NEW! badge if clip is < 12 hours old (based on commit/lastModified time)
+      // NEW! badge if clip is < 12 hours old
       const TWELVE_HOURS = 12 * 60 * 60 * 1000;
       const isNew = Number.isFinite(item.lastModifiedMs) && (Date.now() - item.lastModifiedMs) <= TWELVE_HOURS;
       if (isNew){
@@ -445,13 +496,12 @@
     async function main(){
       let rawList = await listFilesFromDirectory(CLIPS_DIR);
 
-      // Normalize to objects { url, path, branch }
       const list = rawList.map(entry => {
         if(typeof entry === 'string'){
           const guess = guessRepoPathFromUrl(entry);
           return { url: entry, path: guess.path, branch: guess.branch };
         }
-        return entry; // already {url, path, branch}
+        return entry;
       });
 
       const { owner, repo } = ghRepoInfo();
@@ -460,16 +510,14 @@
         const fname = decodedFilenameFrom(it.url);
         const title = baseNoExt(fname);
 
-        // Prefer GitHub last commit date if we can
         let commitMs = NaN;
         if(owner && repo && it.path){
           commitMs = await getGitHubLastCommitMs({ owner, repo, branch: it.branch || GH_BRANCH || 'main', path: it.path });
         }
 
-        // Fallback to HTTP Last-Modified if commitMs failed
         const lastModMs = Number.isFinite(commitMs) ? commitMs : await headLastModifiedMs(it.url);
-
         const duration = await getDuration(it.url);
+
         return { url: it.url, filename: fname, title, lastModifiedMs: lastModMs, duration };
       }));
 
@@ -493,9 +541,9 @@
           const am = Number.isFinite(a.lastModifiedMs) ? a.lastModifiedMs : -Infinity;
           const bm = Number.isFinite(b.lastModifiedMs) ? b.lastModifiedMs : -Infinity;
           if(!Number.isFinite(a.lastModifiedMs) && !Number.isFinite(b.lastModifiedMs)) return 0;
-          if(!Number.isFinite(a.lastModifiedMs)) return 1;  // a unknown -> after b
-          if(!Number.isFinite(b.lastModifiedMs)) return -1; // b unknown -> after a
-          return bm - am; // newest first
+          if(!Number.isFinite(a.lastModifiedMs)) return 1;
+          if(!Number.isFinite(b.lastModifiedMs)) return -1;
+          return bm - am;
         });
       }
 
@@ -504,9 +552,9 @@
           const am = Number.isFinite(a.lastModifiedMs) ? a.lastModifiedMs : +Infinity;
           const bm = Number.isFinite(b.lastModifiedMs) ? b.lastModifiedMs : +Infinity;
           if(!Number.isFinite(a.lastModifiedMs) && !Number.isFinite(b.lastModifiedMs)) return 0;
-          if(!Number.isFinite(a.lastModifiedMs)) return 1;  // a unknown -> after b
-          if(!Number.isFinite(b.lastModifiedMs)) return -1; // b unknown -> after a
-          return am - bm; // oldest first
+          if(!Number.isFinite(a.lastModifiedMs)) return 1;
+          if(!Number.isFinite(b.lastModifiedMs)) return -1;
+          return am - bm;
         });
       }
 
@@ -515,13 +563,11 @@
       empty.hidden = list.length !== 0;
     }
 
-    // Events: input for search, change for select
     document.getElementById('q').addEventListener('input', render);
     document.getElementById('sort').addEventListener('change', render);
 
     document.getElementById('year').textContent = new Date().getFullYear();
 
-    // Close dialog with Escape
     document.addEventListener('keydown',(e)=>{ if(e.key==='Escape' && dlg.open){ dlg.close(); }});
 
     main().catch(err=>{
