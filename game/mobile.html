@@ -1,0 +1,208 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no" />
+  <title>Mr. Peebles, M.D. (Mobile)</title>
+  <style>
+    html, body { margin:0; padding:0; height:100%; overflow:hidden; background:#000; font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial; }
+    #game { position:fixed; inset:0; }
+
+    /* HUD (same as desktop, but a bit tighter for phones) */
+    #hud { position:fixed; inset:0; pointer-events:none; }
+    #topbar {
+      position:fixed; left:12px; top:10px; display:flex; gap:12px; align-items:center;
+      padding:9px 11px; border-radius:14px; background:rgba(0,0,0,.40); backdrop-filter: blur(6px);
+      color:#fff; font-weight:800; text-shadow: 0 2px 10px rgba(0,0,0,.55);
+      font-size:14px;
+    }
+    #power {
+      position:fixed; left:12px; top:54px; display:flex; align-items:center; gap:10px;
+      padding:9px 11px; border-radius:14px; background:rgba(0,0,0,.40); backdrop-filter: blur(6px);
+      color:#fff; font-weight:800; text-shadow: 0 2px 10px rgba(0,0,0,.55);
+    }
+    #powerBar { width: 140px; height: 10px; border-radius: 999px; background: rgba(255,255,255,.15); overflow:hidden; border: 1px solid rgba(255,255,255,.12); }
+    #powerFill { height:100%; width:100%; background: rgba(255,255,255,.92); transform-origin: left center; transform: scaleX(1); }
+    #powerText { font-variant-numeric: tabular-nums; opacity:.92; font-weight:900; min-width: 40px; text-align:right; }
+    #power.low #powerFill { background: rgba(255,80,80,.95); }
+
+    #crosshair { position:fixed; left:50%; top:50%; width:24px; height:24px; transform:translate(-50%,-50%); opacity:.9; }
+    #arms { position:fixed; left:50%; bottom:-6px; width:min(880px, 120vw); transform:translateX(-50%); }
+
+    #minimap {
+      position:fixed; right:12px; top:10px; width:160px; height:160px;
+      border-radius:16px; background:rgba(0,0,0,.40); border:1px solid rgba(255,255,255,.15);
+      overflow:hidden;
+    }
+    #mm { width:160px; height:160px; }
+
+    #start {
+      position:fixed; inset:0; display:flex; align-items:center; justify-content:center;
+      background: radial-gradient(circle at 50% 40%, rgba(60,80,110,.35), rgba(0,0,0,.88));
+      color:#fff;
+      pointer-events:auto;
+    }
+    #start .card {
+      width:min(760px, 92vw);
+      padding:16px 16px 14px;
+      border-radius:18px;
+      border:1px solid rgba(255,255,255,.12);
+      background:rgba(0,0,0,.40);
+      box-shadow: 0 10px 40px rgba(0,0,0,.55);
+    }
+    #start h1 { margin:0 0 8px; font-size:26px; letter-spacing:0.2px; }
+    #start p { margin:8px 0; opacity:.92; line-height:1.35; }
+    #start .row { display:flex; gap:10px; flex-wrap:wrap; margin-top:12px; }
+    #start button {
+      cursor:pointer; border:none; padding:12px 16px; border-radius:16px;
+      font-weight:900; background:#fff; color:#000;
+    }
+    #start .small { opacity:.85; font-size:13px; margin-top:10px; }
+
+    /* Mobile controls overlay */
+    #controls { position:fixed; inset:0; pointer-events:none; }
+    #controls { z-index: 50; }
+    #look, #joy, #buttons { z-index: 55; }
+    #game { z-index: 0; }
+
+    /* Look area: right ~60% of screen is swipe-to-look */
+    #look {
+      position:fixed;
+      right:0; top:0;
+      width:62vw; height:70vh;
+      pointer-events:auto;
+      background: rgba(0,0,0,0);
+      z-index: 40;
+    }
+
+    /* Joystick */
+    #joy {
+      position:fixed;
+      left:14px; bottom:18px;
+      width:128px; height:128px;
+      border-radius:999px;
+      background: rgba(255,255,255,.08);
+      border: 1px solid rgba(255,255,255,.14);
+      box-shadow: 0 8px 22px rgba(0,0,0,.45);
+      pointer-events:auto;
+      backdrop-filter: blur(4px);
+    }
+    #joyStick {
+      position:absolute;
+      left:50%; top:50%;
+      width:58px; height:58px;
+      margin-left:-29px; margin-top:-29px;
+      border-radius:999px;
+      background: rgba(255,255,255,.16);
+      border: 1px solid rgba(255,255,255,.22);
+      box-shadow: 0 10px 30px rgba(0,0,0,.55);
+      transform: translate(0px, 0px);
+    }
+
+    /* Buttons */
+    #btns{
+      position:fixed;
+      right:14px; bottom:18px;
+      display:flex;
+      flex-direction:column;
+      gap:10px;
+      align-items:flex-end;
+      pointer-events:auto;
+      z-index: 60;
+    }
+    .btn{
+      user-select:none;
+      -webkit-user-select:none;
+      width: 150px;
+      padding: 14px 14px;
+      border-radius: 18px;
+      border: 1px solid rgba(255,255,255,.16);
+      background: rgba(0,0,0,.45);
+      color: #fff;
+      font-weight: 900;
+      text-shadow: 0 2px 12px rgba(0,0,0,.65);
+      box-shadow: 0 10px 32px rgba(0,0,0,.55);
+      text-align:center;
+    }
+    .btn.small { width: 150px; padding: 12px 14px; opacity: .96; }
+    .btn:active { transform: translateY(1px) scale(0.99); }
+    .btn.active { background: rgba(255,255,255,.22); }
+
+    /* Small helper in bottom center */
+    #help {
+      position:fixed;
+      left:50%;
+      bottom: 10px;
+      transform: translateX(-50%);
+      padding:8px 10px;
+      border-radius:14px;
+      background: rgba(0,0,0,.35);
+      border: 1px solid rgba(255,255,255,.12);
+      color:#fff;
+      font-weight:700;
+      font-size:12px;
+      pointer-events:none;
+      opacity:.9;
+    }
+  </style>
+</head>
+<body>
+  <canvas id="game"></canvas>
+
+  <div id="hud">
+    <div id="topbar">
+      <div>⏱ <span id="time">03:00</span></div>
+      <div>🩺 Saved: <span id="saved">0</span> / <span id="quota">10</span></div>
+    </div>
+
+    <div id="power" aria-label="Power">
+      <div>⚡ Power</div>
+      <div id="powerBar"><div id="powerFill"></div></div>
+      <div id="powerText">100</div>
+    </div>
+
+    <div id="minimap"><canvas id="mm" width="160" height="160"></canvas></div>
+    <img id="crosshair" src="assets/sprites/crosshair.png" alt="">
+    <img id="arms" src="assets/sprites/arms_idle.png" alt="">
+
+    <div id="start">
+      <div class="card">
+        <h1>Mr. Peebles, M.D.</h1>
+        <p><b>Mobile controls:</b> Left thumb to move. Right thumb to look. Buttons to punch / grab+throw / sprint.</p>
+        <p><b>Goal:</b> "heal" <b>N</b> patients before the timer hits zero.</p>
+        <div class="row">
+          <button id="play">Tap to Play</button>
+          <button id="restart">Regenerate Hospital</button>
+        </div>
+        <div class="small">HINT:Punch donut machine for more power</div>
+      </div>
+    </div>
+  </div>
+
+  <div id="controls">
+    <div id="look" aria-label="Look area"></div>
+
+    <div id="joy" aria-label="Move joystick">
+      <div id="joyStick"></div>
+    </div>
+
+    <div id="btns">
+      <div class="btn" id="btnPunch">👊 Punch</div>
+      <div class="btn" id="btnGrab">✋ Grab / Throw</div>
+      <div class="btn small" id="btnSprint">🏃 Hold Sprint</div>
+</div>
+    <div id="help">Left: move • Right: look • Punch heals • Grab+Throw costs power</div>
+  </div>
+
+  <script type="importmap">
+  {
+    "imports": {
+      "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+      "three/examples/jsm/": "https://unpkg.com/three@0.160.0/examples/jsm/"
+    }
+  }
+  </script>
+
+  <script type="module" src="src/mobileMain.js"></script>
+</body>
+</html>

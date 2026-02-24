@@ -1,0 +1,134 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Mr. Peebles, M.D.</title>
+  <style>
+    html, body { margin:0; padding:0; height:100%; overflow:hidden; background:#000; font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial; }
+    #game { position:fixed; inset:0; }
+    #hud { position:fixed; inset:0; pointer-events:none; }
+    #topbar {
+      position:fixed; left:16px; top:12px; display:flex; gap:14px; align-items:center;
+      padding:10px 12px; border-radius:14px; background:rgba(0,0,0,.40); backdrop-filter: blur(6px);
+      color:#fff; font-weight:800; text-shadow: 0 2px 10px rgba(0,0,0,.55);
+    }
+    #power {
+      position:fixed;
+      left:16px;
+      top:64px;
+      display:flex;
+      align-items:center;
+      gap:10px;
+      padding:10px 12px;
+      border-radius:14px;
+      background:rgba(0,0,0,.40);
+      backdrop-filter: blur(6px);
+      color:#fff;
+      font-weight:800;
+      text-shadow: 0 2px 10px rgba(0,0,0,.55);
+      pointer-events:none;
+    }
+    #powerBar {
+      width: 170px;
+      height: 10px;
+      border-radius: 999px;
+      background: rgba(255,255,255,.15);
+      overflow:hidden;
+      border: 1px solid rgba(255,255,255,.12);
+    }
+    #powerFill {
+      height:100%;
+      width:100%;
+      background: rgba(255,255,255,.92);
+      transform-origin: left center;
+      transform: scaleX(1);
+    }
+    #powerText { font-variant-numeric: tabular-nums; opacity:.92; font-weight:900; min-width: 40px; text-align:right; }
+    #power.low #powerFill { background: rgba(255,80,80,.95); }
+    #hint {
+      position:fixed; left:50%; bottom:118px; transform:translateX(-50%);
+      padding:10px 12px; border-radius:14px; background:rgba(0,0,0,.40); color:#fff;
+      font-weight:700; display:none;
+    }
+    #crosshair { position:fixed; left:50%; top:50%; width:28px; height:28px; transform:translate(-50%,-50%); opacity:.92; }
+    #arms { position:fixed; left:50%; bottom:-6px; width:880px; transform:translateX(-50%); }
+    #minimap {
+      position:fixed; right:16px; top:12px; width:190px; height:190px;
+      border-radius:16px; background:rgba(0,0,0,.40); border:1px solid rgba(255,255,255,.15);
+      overflow:hidden;
+    }
+    #mm { width:190px; height:190px; }
+    #start {
+      position:fixed; inset:0; display:flex; align-items:center; justify-content:center;
+      background: radial-gradient(circle at 50% 40%, rgba(60,80,110,.35), rgba(0,0,0,.88));
+      color:#fff;
+      pointer-events:auto;
+    }
+    #start .card {
+      width:min(760px, 92vw);
+      padding:18px 18px 16px;
+      border-radius:18px;
+      border:1px solid rgba(255,255,255,.12);
+      background:rgba(0,0,0,.40);
+      box-shadow: 0 10px 40px rgba(0,0,0,.55);
+    }
+    #start h1 { margin:0 0 8px; font-size:30px; letter-spacing:0.2px; }
+    #start p { margin:8px 0; opacity:.92; line-height:1.35; }
+    #start .row { display:flex; gap:10px; flex-wrap:wrap; margin-top:12px; }
+    #start button {
+      cursor:pointer;
+      border:none;
+      padding:10px 14px;
+      border-radius:14px;
+      font-weight:900;
+      background:#fff;
+      color:#000;
+    }
+    #start .small { opacity:.85; font-size:13px; margin-top:10px; }
+  </style>
+</head>
+<body>
+  <canvas id="game"></canvas>
+
+  <div id="hud">
+    <div id="topbar">
+      <div>⏱ <span id="time">03:00</span></div>
+      <div>🩺 Saved: <span id="saved">0</span> / <span id="quota">10</span></div>    </div>
+
+    <div id="power" aria-label="Power">
+      <div>⚡ Power</div>
+      <div id="powerBar"><div id="powerFill"></div></div>
+      <div id="powerText">100</div>
+    </div>
+
+    <div id="minimap"><canvas id="mm" width="190" height="190"></canvas></div>
+
+    <img id="crosshair" src="assets/sprites/crosshair.png" alt="">
+    <img id="arms" src="assets/sprites/arms_idle.png" alt="">
+
+    <div id="start">
+      <div class="card">
+        <h1>Mr. Peebles, M.D.</h1>
+        <p><b>Goal:</b> "heal" <b>N</b> patients before the timer hits zero. Punch to heal fast, or grab + throw to heal big. Punch through walls.</p>
+        <div class="row">
+          <button id="play">Play</button>
+          <button id="restart">Regenerate Hospital</button>
+        </div>
+        <div class="small">HINT:Punch donut machine for more power.</div>
+      </div>
+    </div>
+  </div>
+
+  <script type="importmap">
+  {
+    "imports": {
+      "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+      "three/examples/jsm/": "https://unpkg.com/three@0.160.0/examples/jsm/"
+    }
+  }
+  </script>
+
+  <script type="module" src="src/main.js"></script>
+</body>
+</html>
